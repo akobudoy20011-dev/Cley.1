@@ -2,11 +2,14 @@ from flask import Flask, request
 import requests
 import os
 
-from economy import (
+from money import (
     get_balance,
     deposit,
     withdraw,
     daily
+)
+
+from permissions import can_announce
 )
 
 from permissions import can_announce
@@ -77,8 +80,7 @@ def cleydo(message, user_id):
         announcement = command[9:].strip()
 
         if not can_announce(user_id):
-            return "❌ Only admins and moderators can make announcements."
-
+            return "❌ Only the admin can make announcements."
         if not announcement:
             return "❌ Write an announcement."
 
