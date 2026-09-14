@@ -10,9 +10,6 @@ from money import (
 )
 
 from permissions import can_announce
-)
-
-from permissions import can_announce
 
 app = Flask(__name__)
 
