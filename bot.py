@@ -2,14 +2,14 @@ from flask import Flask, request
 import requests
 import os
 
-from money import (
+from Money import (
     get_balance,
     deposit,
     withdraw,
     daily
 )
 
-from permissions import can_announce
+from Permissions import can_announce
 
 app = Flask(__name__)
 
