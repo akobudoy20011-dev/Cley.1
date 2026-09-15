@@ -1,8 +1,6 @@
 # permissions.py
 
-ADMINS = {
-    "https://www.facebook.com/share/1Zb1n5SYo6/"
-}
+ADMINS = {"https://www.facebook.com/share/1Zb1n5SYo6/"}
 
 def is_admin(user_id):
     return str(user_id) in ADMINS
