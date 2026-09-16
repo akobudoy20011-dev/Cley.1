@@ -1,6 +1,6 @@
-from flask import Flask, request
-import os
+from flask import Flask, request, send_from_directory
 import logging
+import os
 import requests
 
 from Money import (
@@ -12,14 +12,20 @@ from Money import (
     admin_remove_money,
 )
 
-from Permissions import can_announce, is_admin
+from Permissions import (
+    can_announce,
+    is_admin,
+)
 
 from Games import (
     play_game,
     game_help,
+    game_action,
 )
 
-from Actions import action
+from Actions import (
+    action,
+)
 
 
 # =========================================================
@@ -33,22 +39,39 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cleydo")
 
 
 # =========================================================
 # ENVIRONMENT
 # =========================================================
 
-VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "").strip()
-PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN", "").strip()
+VERIFY_TOKEN = os.environ.get(
+    "VERIFY_TOKEN",
+    "",
+).strip()
+
+PAGE_ACCESS_TOKEN = os.environ.get(
+    "PAGE_ACCESS_TOKEN",
+    "",
+).strip()
+
+PUBLIC_BASE_URL = os.environ.get(
+    "PUBLIC_BASE_URL",
+    "",
+).strip().rstrip("/")
 
 
 # =========================================================
-# CONFIGURATION
+# CONFIG
 # =========================================================
 
 BOT_PREFIX = "cleydo"
+
+GIF_DIRECTORY = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "gifs",
+)
 
 
 # =========================================================
@@ -70,7 +93,10 @@ def help_message():
         "🎮 GAMES\n"
         "• `cleydo games`\n"
         "• `cleydo blackjack`\n"
+        "• `cleydo hit`\n"
+        "• `cleydo stand`\n"
         "• `cleydo uno`\n"
+        "• `cleydo play 1`\n"
         "• `cleydo coinflip`\n"
         "• `cleydo dice`\n"
         "• `cleydo slots`\n"
@@ -112,6 +138,21 @@ def parse_amount(parts):
 
 
 # =========================================================
+# ACTION HELPERS
+# =========================================================
+
+ACTION_NAMES = {
+    "slap",
+    "kick",
+    "punch",
+    "hug",
+    "pat",
+    "highfive",
+    "poke",
+}
+
+
+# =========================================================
 # CLEYDO COMMAND HANDLER
 # =========================================================
 
@@ -124,7 +165,6 @@ def cleydo(message, user_id):
     if not original.lower().startswith(BOT_PREFIX):
         return None
 
-    # Remove prefix while preserving original casing.
     command = original[len(BOT_PREFIX):].strip()
 
     if not command:
@@ -132,9 +172,9 @@ def cleydo(message, user_id):
 
     command_lower = command.lower()
 
-    # -----------------------------------------------------
+    # =====================================================
     # HELP
-    # -----------------------------------------------------
+    # =====================================================
 
     if command_lower in (
         "help",
@@ -144,9 +184,9 @@ def cleydo(message, user_id):
     ):
         return help_message()
 
-    # -----------------------------------------------------
+    # =====================================================
     # BALANCE
-    # -----------------------------------------------------
+    # =====================================================
 
     if command_lower in (
         "balance",
@@ -166,9 +206,9 @@ def cleydo(message, user_id):
             f"💎 Total: **{total:,}**"
         )
 
-    # -----------------------------------------------------
+    # =====================================================
     # DAILY
-    # -----------------------------------------------------
+    # =====================================================
 
     if command_lower in (
         "daily",
@@ -176,11 +216,18 @@ def cleydo(message, user_id):
     ):
         return daily(user_id)
 
-    # -----------------------------------------------------
+    # =====================================================
     # DEPOSIT
-    # -----------------------------------------------------
+    # =====================================================
 
-    if command_lower.startswith("deposit"):
+    if command_lower == "deposit":
+        return (
+            "❌ Missing amount.\n\n"
+            "Example:\n"
+            "`cleydo deposit 500`"
+        )
+
+    if command_lower.startswith("deposit "):
         parts = command.split()
 
         amount = parse_amount(parts)
@@ -197,11 +244,18 @@ def cleydo(message, user_id):
             amount,
         )
 
-    # -----------------------------------------------------
+    # =====================================================
     # WITHDRAW
-    # -----------------------------------------------------
+    # =====================================================
 
-    if command_lower.startswith("withdraw"):
+    if command_lower == "withdraw":
+        return (
+            "❌ Missing amount.\n\n"
+            "Example:\n"
+            "`cleydo withdraw 500`"
+        )
+
+    if command_lower.startswith("withdraw "):
         parts = command.split()
 
         amount = parse_amount(parts)
@@ -228,6 +282,7 @@ def cleydo(message, user_id):
     ):
         return game_help()
 
+    # Explicit game subcommand.
     if command_lower.startswith("game "):
         game_name = command[5:].strip()
 
@@ -236,6 +291,22 @@ def cleydo(message, user_id):
             user_id,
         )
 
+    # Game continuation commands.
+    if command_lower in (
+        "hit",
+        "stand",
+        "play",
+        "draw",
+    ) or command_lower.startswith("play "):
+
+        result = game_action(
+            command,
+            user_id,
+        )
+
+        return result
+
+    # New game commands.
     if command_lower in (
         "blackjack",
         "uno",
@@ -256,36 +327,28 @@ def cleydo(message, user_id):
     # ACTIONS
     # =====================================================
 
-    action_names = {
-        "slap",
-        "kick",
-        "punch",
-        "hug",
-        "pat",
-        "highfive",
-        "poke",
-    }
-
     first_word = command_lower.split(
         maxsplit=1
     )[0]
 
-    if first_word in action_names:
-        result = action(
+    if first_word in ACTION_NAMES:
+        return action(
             command,
             user_id,
         )
-
-        if isinstance(result, dict):
-            return result
-
-        return result
 
     # =====================================================
     # ANNOUNCEMENT
     # =====================================================
 
-    if command_lower.startswith("announce"):
+    if command_lower == "announce":
+        return (
+            "❌ Write an announcement.\n\n"
+            "Example:\n"
+            "`cleydo announce Server maintenance tonight.`"
+        )
+
+    if command_lower.startswith("announce "):
         if not can_announce(user_id):
             return (
                 "❌ You don't have permission "
@@ -298,13 +361,9 @@ def cleydo(message, user_id):
 
         if not announcement:
             return (
-                "❌ Write an announcement.\n\n"
-                "Example:\n"
-                "`cleydo announce Server maintenance tonight.`"
+                "❌ Write an announcement."
             )
 
-        # IMPORTANT:
-        # Keep original capitalization.
         return (
             "╭────────────────────╮\n"
             "      📢 ANNOUNCEMENT\n"
@@ -337,7 +396,9 @@ def cleydo(message, user_id):
         try:
             amount = int(parts[2])
         except ValueError:
-            return "❌ Amount must be a valid number."
+            return (
+                "❌ Amount must be a valid number."
+            )
 
         return admin_add_money(
             user_id,
@@ -369,7 +430,9 @@ def cleydo(message, user_id):
         try:
             amount = int(parts[2])
         except ValueError:
-            return "❌ Amount must be a valid number."
+            return (
+                "❌ Amount must be a valid number."
+            )
 
         return admin_remove_money(
             user_id,
@@ -378,7 +441,7 @@ def cleydo(message, user_id):
         )
 
     # =====================================================
-    # UNKNOWN COMMAND
+    # UNKNOWN
     # =====================================================
 
     return (
@@ -389,7 +452,7 @@ def cleydo(message, user_id):
 
 
 # =========================================================
-# SEND MESSAGE
+# MESSENGER SEND
 # =========================================================
 
 def send_message(recipient_id, message):
@@ -404,28 +467,79 @@ def send_message(recipient_id, message):
         f"?access_token={PAGE_ACCESS_TOKEN}"
     )
 
-    # Actions.py can return a dictionary.
+    # -----------------------------------------------------
+    # ACTION WITH GIF
+    # -----------------------------------------------------
+
     if isinstance(message, dict):
-        text = message.get("text", "")
+        text = str(
+            message.get(
+                "text",
+                "",
+            )
+        )
 
-        payload = {
-            "recipient": {
-                "id": str(recipient_id)
-            },
-            "message": {
-                "text": text
-            }
-        }
+        gif = message.get("gif")
 
-    else:
-        payload = {
-            "recipient": {
-                "id": str(recipient_id)
-            },
-            "message": {
-                "text": str(message)
+        # Send text + GIF attachment when possible.
+        if gif and PUBLIC_BASE_URL:
+            gif_url = (
+                f"{PUBLIC_BASE_URL}"
+                f"/gifs/{gif}"
+            )
+
+            payload = {
+                "recipient": {
+                    "id": str(recipient_id)
+                },
+                "message": {
+                    "attachment": {
+                        "type": "image",
+                        "payload": {
+                            "url": gif_url,
+                            "is_reusable": True,
+                        },
+                    }
+                },
             }
-        }
+
+            try:
+                response = requests.post(
+                    url,
+                    json=payload,
+                    timeout=15,
+                )
+
+                if response.ok:
+                    return True
+
+                logger.error(
+                    "GIF send failed %s: %s",
+                    response.status_code,
+                    response.text,
+                )
+
+            except requests.RequestException as error:
+                logger.error(
+                    "GIF request failed: %s",
+                    error,
+                )
+
+        # Fall back to text.
+        message = text
+
+    # -----------------------------------------------------
+    # TEXT MESSAGE
+    # -----------------------------------------------------
+
+    payload = {
+        "recipient": {
+            "id": str(recipient_id)
+        },
+        "message": {
+            "text": str(message)
+        },
+    }
 
     try:
         response = requests.post(
@@ -452,6 +566,51 @@ def send_message(recipient_id, message):
         )
 
         return False
+
+
+# =========================================================
+# GIF FILE SERVER
+# =========================================================
+
+@app.route(
+    "/gifs/<path:filename>",
+    methods=["GET"],
+)
+def serve_gif(filename):
+    return send_from_directory(
+        GIF_DIRECTORY,
+        filename,
+    )
+
+
+# =========================================================
+# HOME
+# =========================================================
+
+@app.route(
+    "/",
+    methods=["GET"],
+)
+def home():
+    return (
+        "🐈‍⬛ Cleydo is online.",
+        200,
+    )
+
+
+# =========================================================
+# HEALTH
+# =========================================================
+
+@app.route(
+    "/health",
+    methods=["GET"],
+)
+def health():
+    return {
+        "status": "online",
+        "bot": "Cleydo",
+    }, 200
 
 
 # =========================================================
@@ -549,37 +708,11 @@ def webhook():
 
             except Exception as error:
                 logger.exception(
-                    "Error processing event: %s",
+                    "Event processing error: %s",
                     error,
                 )
 
     return "EVENT_RECEIVED", 200
-
-
-# =========================================================
-# HEALTH CHECK
-# =========================================================
-
-@app.route(
-    "/",
-    methods=["GET"],
-)
-def home():
-    return (
-        "🐈‍⬛ Cleydo is online.",
-        200,
-    )
-
-
-@app.route(
-    "/health",
-    methods=["GET"],
-)
-def health():
-    return {
-        "status": "online",
-        "bot": "Cleydo",
-    }, 200
 
 
 # =========================================================
