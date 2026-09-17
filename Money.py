@@ -19,6 +19,15 @@ def connect():
         timeout=15,
     )
 
+    # Better SQLite concurrency.
+    db.execute(
+        "PRAGMA journal_mode=WAL"
+    )
+
+    db.execute(
+        "PRAGMA busy_timeout=15000"
+    )
+
     db.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -165,27 +174,52 @@ def remove_money(
 
     user_id = str(user_id)
 
-    wallet, bank = get_balance(
-        user_id
-    )
-
-    if wallet + bank < amount:
-        return False
-
-    wallet_remove = min(
-        wallet,
-        amount,
-    )
-
-    bank_remove = (
-        amount
-        - wallet_remove
-    )
+    ensure_user(user_id)
 
     db = connect()
 
     try:
+        # Lock the database transaction before checking
+        # and changing the user's money.
         db.execute(
+            "BEGIN IMMEDIATE"
+        )
+
+        cursor = db.cursor()
+
+        cursor.execute(
+            """
+            SELECT wallet, bank
+            FROM users
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+
+        result = cursor.fetchone()
+
+        if result is None:
+            db.rollback()
+            return False
+
+        wallet = int(result[0])
+        bank = int(result[1])
+
+        if wallet + bank < amount:
+            db.rollback()
+            return False
+
+        wallet_remove = min(
+            wallet,
+            amount,
+        )
+
+        bank_remove = (
+            amount
+            - wallet_remove
+        )
+
+        cursor.execute(
             """
             UPDATE users
             SET wallet = wallet - ?,
@@ -202,6 +236,10 @@ def remove_money(
         db.commit()
 
         return True
+
+    except Exception:
+        db.rollback()
+        raise
 
     finally:
         db.close()
@@ -230,36 +268,71 @@ def deposit(
             "❌ Amount must be greater than 0."
         )
 
-    wallet, bank = get_balance(
-        user_id
-    )
-
-    if wallet < amount:
-        return (
-            "❌ You don't have enough "
-            "coins in your wallet."
-        )
-
     user_id = str(user_id)
+
+    ensure_user(user_id)
 
     db = connect()
 
     try:
         db.execute(
+            "BEGIN IMMEDIATE"
+        )
+
+        cursor = db.cursor()
+
+        cursor.execute(
+            """
+            SELECT wallet, bank
+            FROM users
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+
+        result = cursor.fetchone()
+
+        if result is None:
+            db.rollback()
+
+            return (
+                "❌ User account could not "
+                "be found."
+            )
+
+        wallet = int(result[0])
+        bank = int(result[1])
+
+        if wallet < amount:
+            db.rollback()
+
+            return (
+                "❌ You don't have enough "
+                "coins in your wallet."
+            )
+
+        new_wallet = wallet - amount
+        new_bank = bank + amount
+
+        cursor.execute(
             """
             UPDATE users
-            SET wallet = wallet - ?,
-                bank = bank + ?
+            SET wallet = ?,
+                bank = ?
             WHERE user_id = ?
             """,
             (
-                amount,
-                amount,
+                new_wallet,
+                new_bank,
                 user_id,
             ),
         )
 
         db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
 
     finally:
         db.close()
@@ -269,8 +342,8 @@ def deposit(
         "      🏦 DEPOSIT\n"
         "╰────────────────╯\n\n"
         f"💰 Deposited: **{amount:,}**\n\n"
-        f"👛 Wallet: **{wallet - amount:,}**\n"
-        f"🏦 Bank: **{bank + amount:,}**"
+        f"👛 Wallet: **{new_wallet:,}**\n"
+        f"🏦 Bank: **{new_bank:,}**"
     )
 
 
@@ -297,36 +370,71 @@ def withdraw(
             "❌ Amount must be greater than 0."
         )
 
-    wallet, bank = get_balance(
-        user_id
-    )
-
-    if bank < amount:
-        return (
-            "❌ You don't have enough "
-            "coins in your bank."
-        )
-
     user_id = str(user_id)
+
+    ensure_user(user_id)
 
     db = connect()
 
     try:
         db.execute(
+            "BEGIN IMMEDIATE"
+        )
+
+        cursor = db.cursor()
+
+        cursor.execute(
+            """
+            SELECT wallet, bank
+            FROM users
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+
+        result = cursor.fetchone()
+
+        if result is None:
+            db.rollback()
+
+            return (
+                "❌ User account could not "
+                "be found."
+            )
+
+        wallet = int(result[0])
+        bank = int(result[1])
+
+        if bank < amount:
+            db.rollback()
+
+            return (
+                "❌ You don't have enough "
+                "coins in your bank."
+            )
+
+        new_wallet = wallet + amount
+        new_bank = bank - amount
+
+        cursor.execute(
             """
             UPDATE users
-            SET wallet = wallet + ?,
-                bank = bank - ?
+            SET wallet = ?,
+                bank = ?
             WHERE user_id = ?
             """,
             (
-                amount,
-                amount,
+                new_wallet,
+                new_bank,
                 user_id,
             ),
         )
 
         db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
 
     finally:
         db.close()
@@ -336,8 +444,8 @@ def withdraw(
         "     💵 WITHDRAW\n"
         "╰────────────────╯\n\n"
         f"💰 Withdrew: **{amount:,}**\n\n"
-        f"👛 Wallet: **{wallet + amount:,}**\n"
-        f"🏦 Bank: **{bank - amount:,}**"
+        f"👛 Wallet: **{new_wallet:,}**\n"
+        f"🏦 Bank: **{new_bank:,}**"
     )
 
 
@@ -357,11 +465,15 @@ def daily(user_id):
     db = connect()
 
     try:
+        db.execute(
+            "BEGIN IMMEDIATE"
+        )
+
         cursor = db.cursor()
 
         cursor.execute(
             """
-            SELECT last_daily
+            SELECT wallet, last_daily
             FROM users
             WHERE user_id = ?
             """,
@@ -370,11 +482,16 @@ def daily(user_id):
 
         result = cursor.fetchone()
 
-        last_daily = (
-            int(result[0])
-            if result
-            else 0
-        )
+        if result is None:
+            db.rollback()
+
+            return (
+                "❌ User account could not "
+                "be found."
+            )
+
+        wallet = int(result[0])
+        last_daily = int(result[1])
 
         now = int(
             time.time()
@@ -389,6 +506,8 @@ def daily(user_id):
         )
 
         if remaining > 0:
+            db.rollback()
+
             hours = (
                 remaining
                 // 3600
@@ -408,21 +527,30 @@ def daily(user_id):
                 f"**{hours}h {minutes}m**."
             )
 
+        new_wallet = (
+            wallet
+            + DAILY_AMOUNT
+        )
+
         cursor.execute(
             """
             UPDATE users
-            SET wallet = wallet + ?,
+            SET wallet = ?,
                 last_daily = ?
             WHERE user_id = ?
             """,
             (
-                DAILY_AMOUNT,
+                new_wallet,
                 now,
                 user_id,
             ),
         )
 
         db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
 
     finally:
         db.close()
